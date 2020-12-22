@@ -1,6 +1,7 @@
+import math
+
 import pytest
 
-from jinja2._compat import text_type
 from jinja2.exceptions import UndefinedError
 from jinja2.nativetypes import NativeEnvironment
 from jinja2.nativetypes import NativeTemplate
@@ -53,7 +54,7 @@ def test_multi_expression_add(env):
 def test_loops(env):
     t = env.from_string("{% for x in value %}{{ x }}{% endfor %}")
     result = t.render(value=["a", "b", "c", "d"])
-    assert isinstance(result, text_type)
+    assert isinstance(result, str)
     assert result == "abcd"
 
 
@@ -111,7 +112,7 @@ def test_constant_dunder_to_string(env):
 def test_string_literal_var(env):
     t = env.from_string("[{{ 'all' }}]")
     result = t.render()
-    assert isinstance(result, text_type)
+    assert isinstance(result, str)
     assert result == "[all]"
 
 
@@ -132,6 +133,15 @@ def test_concat_strings_with_quotes(env):
     t = env.from_string("--host='{{ host }}' --user \"{{ user }}\"")
     result = t.render(host="localhost", user="Jinja")
     assert result == "--host='localhost' --user \"Jinja\""
+
+
+def test_no_intermediate_eval(env):
+    t = env.from_string("0.000{{ a }}")
+    result = t.render(a=7)
+    assert isinstance(result, float)
+    # If intermediate eval happened, 0.000 would render 0.0, then 7
+    # would be appended, resulting in 0.07.
+    assert math.isclose(result, 0.0007)
 
 
 def test_spontaneous_env():

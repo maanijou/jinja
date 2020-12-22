@@ -1,7 +1,4 @@
-# -*- coding: utf-8 -*-
-"""The code for async support. Importing this patches Jinja on supported
-Python versions.
-"""
+"""The code for async support. Importing this patches Jinja."""
 import asyncio
 import inspect
 from functools import update_wrapper
@@ -119,10 +116,10 @@ async def get_default_module_async(self):
 
 def wrap_default_module(original_default_module):
     @internalcode
-    def _get_default_module(self):
+    def _get_default_module(self, ctx=None):
         if self.environment.is_async:
             raise RuntimeError("Template module attribute is unavailable in async mode")
-        return original_default_module(self)
+        return original_default_module(self, ctx)
 
     return _get_default_module
 
@@ -247,18 +244,6 @@ class AsyncLoopContext(LoopContext):
         self._before = self._current
         self._current = rv
         return rv, self
-
-
-async def make_async_loop_context(iterable, undefined, recurse=None, depth0=0):
-    import warnings
-
-    warnings.warn(
-        "This template must be recompiled with at least Jinja 2.11, or"
-        " it will fail in 3.0.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    return AsyncLoopContext(iterable, undefined, recurse, depth0)
 
 
 patch_all()

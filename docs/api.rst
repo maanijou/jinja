@@ -5,9 +5,10 @@ API
     :noindex:
     :synopsis: public Jinja API
 
-This document describes the API to Jinja and not the template language.  It
-will be most useful as reference to those implementing the template interface
-to the application and not those who are creating Jinja templates.
+This document describes the API to Jinja and not the template language
+(for that, see :doc:`/templates`). It will be most useful as reference
+to those implementing the template interface to the application and not
+those who are creating Jinja templates.
 
 Basics
 ------
@@ -24,30 +25,40 @@ initialization and use that to load templates.  In some cases however, it's
 useful to have multiple environments side by side, if different configurations
 are in use.
 
-The simplest way to configure Jinja to load templates for your application
-looks roughly like this::
+The simplest way to configure Jinja to load templates for your
+application is to use :class:`~loaders.PackageLoader`.
+
+.. code-block:: python
 
     from jinja2 import Environment, PackageLoader, select_autoescape
     env = Environment(
-        loader=PackageLoader('yourapplication', 'templates'),
-        autoescape=select_autoescape(['html', 'xml'])
+        loader=PackageLoader("yourapp"),
+        autoescape=select_autoescape()
     )
 
-This will create a template environment with the default settings and a
-loader that looks up the templates in the `templates` folder inside the
-`yourapplication` python package.  Different loaders are available
-and you can also write your own if you want to load templates from a
-database or other resources.  This also enables autoescaping for HTML and
-XML files.
+This will create a template environment with a loader that looks up
+templates in the ``templates`` folder inside the ``yourapp`` Python
+package (or next to the ``yourapp.py`` Python module). It also enables
+autoescaping for HTML files. This loader only requires that ``yourapp``
+is importable, it figures out the absolute path to the folder for you.
 
-To load a template from this environment you just have to call the
-:meth:`get_template` method which then returns the loaded :class:`Template`::
+Different loaders are available to load templates in other ways or from
+other locations. They're listed in the `Loaders`_ section below. You can
+also write your own if you want to load templates from a source that's
+more specialized to your project.
 
-    template = env.get_template('mytemplate.html')
+To load a template from this environment, call the :meth:`get_template`
+method, which returns the loaded :class:`Template`.
 
-To render it with some variables, just call the :meth:`render` method::
+.. code-block:: python
 
-    print(template.render(the='variables', go='here'))
+    template = env.get_template("mytemplate.html")
+
+To render it with some variables, call the :meth:`render` method.
+
+.. code-block:: python
+
+    print(template.render(the="variables", go="here"))
 
 Using a template loader rather than passing strings to :class:`Template`
 or :meth:`Environment.from_string` has multiple advantages.  Besides being
@@ -59,63 +70,6 @@ a lot easier to use it also enables template inheritance.
    for security reasons.  As such you are encouraged to explicitly
    configure autoescaping now instead of relying on the default.
 
-
-Unicode
--------
-
-Jinja is using Unicode internally which means that you have to pass Unicode
-objects to the render function or bytestrings that only consist of ASCII
-characters.  Additionally newlines are normalized to one end of line
-sequence which is per default UNIX style (``\n``).
-
-Python 2.x supports two ways of representing string objects.  One is the
-`str` type and the other is the `unicode` type, both of which extend a type
-called `basestring`.  Unfortunately the default is `str` which should not
-be used to store text based information unless only ASCII characters are
-used.  With Python 2.6 it is possible to make `unicode` the default on a per
-module level and with Python 3 it will be the default.
-
-To explicitly use a Unicode string you have to prefix the string literal
-with a `u`: ``u'Hänsel und Gretel sagen Hallo'``.  That way Python will
-store the string as Unicode by decoding the string with the character
-encoding from the current Python module.  If no encoding is specified this
-defaults to 'ASCII' which means that you can't use any non ASCII identifier.
-
-To set a better module encoding add the following comment to the first or
-second line of the Python module using the Unicode literal::
-
-    # -*- coding: utf-8 -*-
-
-We recommend utf-8 as Encoding for Python modules and templates as it's
-possible to represent every Unicode character in utf-8 and because it's
-backwards compatible to ASCII.  For Jinja the default encoding of templates
-is assumed to be utf-8.
-
-It is not possible to use Jinja to process non-Unicode data.  The reason
-for this is that Jinja uses Unicode already on the language level.  For
-example Jinja treats the non-breaking space as valid whitespace inside
-expressions which requires knowledge of the encoding or operating on an
-Unicode string.
-
-For more details about Unicode in Python have a look at the excellent
-`Unicode documentation`_.
-
-Another important thing is how Jinja is handling string literals in
-templates.  A naive implementation would be using Unicode strings for
-all string literals but it turned out in the past that this is problematic
-as some libraries are typechecking against `str` explicitly.  For example
-`datetime.strftime` does not accept Unicode arguments.  To not break it
-completely Jinja is returning `str` for strings that fit into ASCII and
-for everything else `unicode`:
-
->>> m = Template(u"{% set a, b = 'foo', 'föö' %}").module
->>> m.a
-'foo'
->>> m.b
-u'f\xf6\xf6'
-
-
-.. _Unicode documentation: https://docs.python.org/3/howto/unicode.html
 
 High Level API
 --------------
@@ -301,12 +255,12 @@ Notes on Identifiers
 --------------------
 
 Jinja uses Python naming rules. Valid identifiers can be any combination
-of Unicode characters accepted by Python.
+of characters accepted by Python.
 
 Filters and tests are looked up in separate namespaces and have slightly
 modified identifier syntax.  Filters and tests may contain dots to group
 filters and tests by topic.  For example it's perfectly valid to add a
-function into the filter dict and call it `to.unicode`.  The regular
+function into the filter dict and call it `to.str`.  The regular
 expression for filter and test identifiers is
 ``[a-zA-Z_][a-zA-Z0-9_]*(\.[a-zA-Z_][a-zA-Z0-9_]*)*```.
 
@@ -328,8 +282,8 @@ disallows all operations beside testing if it's an undefined object.
 
     .. attribute:: _undefined_hint
 
-        Either `None` or an unicode string with the error message for
-        the undefined object.
+        Either `None` or a string with the error message for the
+        undefined object.
 
     .. attribute:: _undefined_obj
 
@@ -367,27 +321,32 @@ Undefined objects are created by calling :attr:`undefined`.
 
 .. admonition:: Implementation
 
-    :class:`Undefined` objects are implemented by overriding the special
-    `__underscore__` methods.  For example the default :class:`Undefined`
-    class implements `__unicode__` in a way that it returns an empty
-    string, however `__int__` and others still fail with an exception.  To
-    allow conversion to int by returning ``0`` you can implement your own::
+    :class:`Undefined` is implemented by overriding the special
+    ``__underscore__`` methods. For example the default
+    :class:`Undefined` class implements ``__str__`` to returns an empty
+    string, while ``__int__`` and others fail with an exception. To
+    allow conversion to int by returning ``0`` you can implement your
+    own subclass.
+
+    .. code-block:: python
 
         class NullUndefined(Undefined):
             def __int__(self):
                 return 0
+
             def __float__(self):
                 return 0.0
 
-    To disallow a method, just override it and raise
-    :attr:`~Undefined._undefined_exception`.  Because this is a very common
-    idiom in undefined objects there is the helper method
-    :meth:`~Undefined._fail_with_undefined_error` that does the error raising
-    automatically.  Here a class that works like the regular :class:`Undefined`
-    but chokes on iteration::
+    To disallow a method, override it and raise
+    :attr:`~Undefined._undefined_exception`.  Because this is very
+    common there is the helper method
+    :meth:`~Undefined._fail_with_undefined_error` that raises the error
+    with the correct information. Here's a class that works like the
+    regular :class:`Undefined` but fails on iteration::
 
         class NonIterableUndefined(Undefined):
-            __iter__ = Undefined._fail_with_undefined_error
+            def __iter__(self):
+                self._fail_with_undefined_error()
 
 
 The Context
@@ -529,37 +488,38 @@ Builtin bytecode caches:
 Async Support
 -------------
 
-Starting with version 2.9, Jinja also supports the Python `async` and
-`await` constructs.  As far as template designers go this feature is
-entirely opaque to them however as a developer you should be aware of how
-it's implemented as it influences what type of APIs you can safely expose
-to the template environment.
+.. versionadded:: 2.9
 
-First you need to be aware that by default async support is disabled as
-enabling it will generate different template code behind the scenes which
-passes everything through the asyncio event loop.  This is important to
-understand because it has some impact to what you are doing:
+Jinja supports the Python ``async`` and ``await`` syntax. For the
+template designer, this support (when enabled) is entirely transparent,
+templates continue to look exactly the same. However, developers should
+be aware of the implementation as it affects what types of APIs you can
+use.
 
-*   template rendering will require an event loop to be set for the
-    current thread (``asyncio.get_event_loop`` needs to return one)
-*   all template generation code internally runs async generators which
-    means that you will pay a performance penalty even if the non sync
-    methods are used!
-*   The sync methods are based on async methods if the async mode is
-    enabled which means that `render` for instance will internally invoke
-    `render_async` and run it as part of the current event loop until the
-    execution finished.
+By default, async support is disabled. Enabling it will cause the
+environment to compile different code behind the scenes in order to
+handle async and sync code in an asyncio event loop. This has the
+following implications:
+
+-   Template rendering requires an event loop to be available to the
+    current thread. :func:`asyncio.get_event_loop` must return an event
+    loop.
+-   The compiled code uses ``await`` for functions and attributes, and
+    uses ``async for`` loops. In order to support using both async and
+    sync functions in this context, a small wrapper is placed around
+    all calls and access, which add overhead compared to purely async
+    code.
+-   Sync methods and filters become wrappers around their corresponding
+    async implementations where needed. For example, ``render`` invokes
+    ``async_render``, and ``|map`` supports async iterables.
 
 Awaitable objects can be returned from functions in templates and any
-function call in a template will automatically await the result.  This
-means that you can provide a method that asynchronously loads data
-from a database if you so desire and from the template designer's point of
-view this is just another function they can call.  This means that the
-``await`` you would normally issue in Python is implied.  However this
-only applies to function calls.  If an attribute for instance would be an
-awaitable object then this would not result in the expected behavior.
+function call in a template will automatically await the result. The
+``await`` you would normally add in Python is implied. For example, you
+can provide a method that asynchronously loads data from a database, and
+from the template designer's point of view it can be called like any
+other function.
 
-Likewise iterations with a `for` loop support async iterators.
 
 .. _policies:
 
@@ -574,16 +534,6 @@ behave.  They can be configured with the
 Example::
 
     env.policies['urlize.rel'] = 'nofollow noopener'
-
-``compiler.ascii_str``:
-    This boolean controls on Python 2 if Jinja should store ASCII only
-    literals as bytestring instead of unicode strings.  This used to be
-    always enabled for Jinja versions below 2.9 and now can be changed.
-    Traditionally it was done this way since some APIs in Python 2 failed
-    badly for unicode strings (for instance the datetime strftime API).
-    Now however sometimes the inverse is true (for instance str.format).
-    If this is set to False then all strings are stored as unicode
-    internally.
 
 ``truncate.leeway``:
     Configures the leeway default for the `truncate` filter.  Leeway as
@@ -676,24 +626,20 @@ Exceptions
 
     .. attribute:: message
 
-        The error message as utf-8 bytestring.
+        The error message.
 
     .. attribute:: lineno
 
-        The line number where the error occurred
+        The line number where the error occurred.
 
     .. attribute:: name
 
-        The load name for the template as unicode string.
+        The load name for the template.
 
     .. attribute:: filename
 
-        The filename that loaded the template as bytestring in the encoding
-        of the file system (most likely utf-8 or mbcs on Windows systems).
-
-    The reason why the filename and error message are bytestrings and not
-    unicode strings is that Python 2.x is not using unicode for exceptions
-    and tracebacks as well as the compiler.  This will change with Python 3.
+        The filename that loaded the template in the encoding of the
+        file system (most likely utf-8, or mbcs on Windows systems).
 
 .. autoexception:: jinja2.TemplateRuntimeError
 
@@ -741,12 +687,14 @@ enabled::
     import re
     from jinja2 import evalcontextfilter, Markup, escape
 
-    _paragraph_re = re.compile(r'(?:\r\n|\r(?!\n)|\n){2,}')
+    _paragraph_re = re.compile(r"(?:\r\n|\r(?!\n)|\n){2,}")
 
     @evalcontextfilter
     def nl2br(eval_ctx, value):
-        result = u'\n\n'.join(u'<p>%s</p>' % p.replace('\n', Markup('<br>\n'))
-                              for p in _paragraph_re.split(escape(value)))
+        result = "\n\n".join(
+            f"<p>{p.replace('\n', Markup('<br>\n'))}</p>"
+            for p in _paragraph_re.split(escape(value))
+        )
         if eval_ctx.autoescape:
             result = Markup(result)
         return result
@@ -894,7 +842,7 @@ don't recommend using any of those.
     that has to be created by :meth:`new_context` of the same template or
     a compatible template.  This render function is generated by the
     compiler from the template code and returns a generator that yields
-    unicode strings.
+    strings.
 
     If an exception in the template code happens the template engine will
     not rewrite the exception but pass through the original one.  As a

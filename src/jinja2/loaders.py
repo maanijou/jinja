@@ -1,20 +1,16 @@
-# -*- coding: utf-8 -*-
 """API and implementations for loading templates from different data
 sources.
 """
+import importlib.util
 import os
-import pkgutil
 import sys
 import weakref
+import zipimport
+from collections import abc
 from hashlib import sha1
 from importlib import import_module
-from os import path
 from types import ModuleType
 
-from ._compat import abc
-from ._compat import fspath
-from ._compat import iteritems
-from ._compat import string_types
 from .exceptions import TemplateNotFound
 from .utils import internalcode
 from .utils import open_if_exists
@@ -27,9 +23,9 @@ def split_template_path(template):
     pieces = []
     for piece in template.split("/"):
         if (
-            path.sep in piece
-            or (path.altsep and path.altsep in piece)
-            or piece == path.pardir
+            os.path.sep in piece
+            or (os.path.altsep and os.path.altsep in piece)
+            or piece == os.path.pardir
         ):
             raise TemplateNotFound(template)
         elif piece and piece != ".":
@@ -37,7 +33,7 @@ def split_template_path(template):
     return pieces
 
 
-class BaseLoader(object):
+class BaseLoader:
     """Baseclass for all loaders.  Subclass this and override `get_source` to
     implement a custom loading mechanism.  The environment provides a
     `get_template` method that calls the loader's `load` method to get the
@@ -59,8 +55,8 @@ class BaseLoader(object):
                 if not exists(path):
                     raise TemplateNotFound(template)
                 mtime = getmtime(path)
-                with file(path) as f:
-                    source = f.read().decode('utf-8')
+                with open(path) as f:
+                    source = f.read()
                 return source, path, lambda: mtime == getmtime(path)
     """
 
@@ -77,9 +73,9 @@ class BaseLoader(object):
         `TemplateNotFound` error if it can't locate the template.
 
         The source part of the returned tuple must be the source of the
-        template as unicode string or a ASCII bytestring.  The filename should
-        be the name of the file on the filesystem if it was loaded from there,
-        otherwise `None`.  The filename is used by python for the tracebacks
+        template as a string. The filename should be the name of the
+        file on the filesystem if it was loaded from there, otherwise
+        ``None``. The filename is used by Python for the tracebacks
         if no loader extension is used.
 
         The last item in the tuple is the `uptodate` function.  If auto
@@ -90,7 +86,7 @@ class BaseLoader(object):
         """
         if not self.has_source_access:
             raise RuntimeError(
-                "%s cannot provide access to the source" % self.__class__.__name__
+                f"{self.__class__.__name__} cannot provide access to the source"
             )
         raise TemplateNotFound(template)
 
@@ -141,44 +137,44 @@ class BaseLoader(object):
 
 
 class FileSystemLoader(BaseLoader):
-    """Loads templates from the file system.  This loader can find templates
-    in folders on the file system and is the preferred way to load them.
+    """Load templates from a directory in the file system.
 
-    The loader takes the path to the templates as string, or if multiple
-    locations are wanted a list of them which is then looked up in the
-    given order::
+    The path can be relative or absolute. Relative paths are relative to
+    the current working directory.
 
-    >>> loader = FileSystemLoader('/path/to/templates')
-    >>> loader = FileSystemLoader(['/path/to/templates', '/other/path'])
+    .. code-block:: python
 
-    Per default the template encoding is ``'utf-8'`` which can be changed
-    by setting the `encoding` parameter to something else.
+        loader = FileSystemLoader("templates")
 
-    To follow symbolic links, set the *followlinks* parameter to ``True``::
+    A list of paths can be given. The directories will be searched in
+    order, stopping at the first matching template.
 
-    >>> loader = FileSystemLoader('/path/to/templates', followlinks=True)
+    .. code-block:: python
+
+        loader = FileSystemLoader(["/override/templates", "/default/templates"])
+
+    :param searchpath: A path, or list of paths, to the directory that
+        contains the templates.
+    :param encoding: Use this encoding to read the text from template
+        files.
+    :param followlinks: Follow symbolic links in the path.
 
     .. versionchanged:: 2.8
-       The ``followlinks`` parameter was added.
+        Added the ``followlinks`` parameter.
     """
 
     def __init__(self, searchpath, encoding="utf-8", followlinks=False):
-        if not isinstance(searchpath, abc.Iterable) or isinstance(
-            searchpath, string_types
-        ):
+        if not isinstance(searchpath, abc.Iterable) or isinstance(searchpath, str):
             searchpath = [searchpath]
 
-        # In Python 3.5, os.path.join doesn't support Path. This can be
-        # simplified to list(searchpath) when Python 3.5 is dropped.
-        self.searchpath = [fspath(p) for p in searchpath]
-
+        self.searchpath = list(searchpath)
         self.encoding = encoding
         self.followlinks = followlinks
 
     def get_source(self, environment, template):
         pieces = split_template_path(template)
         for searchpath in self.searchpath:
-            filename = path.join(searchpath, *pieces)
+            filename = os.path.join(searchpath, *pieces)
             f = open_if_exists(filename)
             if f is None:
                 continue
@@ -187,11 +183,11 @@ class FileSystemLoader(BaseLoader):
             finally:
                 f.close()
 
-            mtime = path.getmtime(filename)
+            mtime = os.path.getmtime(filename)
 
             def uptodate():
                 try:
-                    return path.getmtime(filename) == mtime
+                    return os.path.getmtime(filename) == mtime
                 except OSError:
                     return False
 
@@ -242,10 +238,10 @@ class PackageLoader(BaseLoader):
     contributor. Zip files contributing to a namespace are not
     supported.
 
-    .. versionchanged:: 2.11.0
+    .. versionchanged:: 3.0
         No longer uses ``setuptools`` as a dependency.
 
-    .. versionchanged:: 2.11.0
+    .. versionchanged:: 3.0
         Limited PEP 420 namespace package support.
     """
 
@@ -263,21 +259,19 @@ class PackageLoader(BaseLoader):
         # Make sure the package exists. This also makes namespace
         # packages work, otherwise get_loader returns None.
         import_module(package_name)
-        self._loader = loader = pkgutil.get_loader(package_name)
-
-        # Zip loader's archive attribute points at the zip.
-        self._archive = getattr(loader, "archive", None)
+        spec = importlib.util.find_spec(package_name)
+        self._loader = loader = spec.loader
+        self._archive = None
         self._template_root = None
 
-        if hasattr(loader, "get_filename"):
-            # A standard directory package, or a zip package.
-            self._template_root = os.path.join(
-                os.path.dirname(loader.get_filename(package_name)), package_path
-            )
-        elif hasattr(loader, "_path"):
-            # A namespace package, limited support. Find the first
-            # contributor with the template directory.
-            for root in loader._path:
+        if isinstance(loader, zipimport.zipimporter):
+            self._archive = loader.archive
+            pkgdir = next(iter(spec.submodule_search_locations))
+            self._template_root = os.path.join(pkgdir, package_path)
+        elif spec.submodule_search_locations:
+            # This will be one element for regular packages and multiple
+            # for namespace packages.
+            for root in spec.submodule_search_locations:
                 root = os.path.join(root, package_path)
 
                 if os.path.isdir(root):
@@ -286,8 +280,8 @@ class PackageLoader(BaseLoader):
 
         if self._template_root is None:
             raise ValueError(
-                "The %r package was not installed in a way that"
-                " PackageLoader understands." % package_name
+                f"The {package_name!r} package was not installed in a"
+                " way that PackageLoader understands."
             )
 
     def get_source(self, environment, template):
@@ -357,8 +351,8 @@ class PackageLoader(BaseLoader):
 
 
 class DictLoader(BaseLoader):
-    """Loads a template from a python dict.  It's passed a dict of unicode
-    strings bound to template names.  This loader is useful for unittesting:
+    """Loads a template from a Python dict mapping template names to
+    template source.  This loader is useful for unittesting:
 
     >>> loader = DictLoader({'index.html': 'source here'})
 
@@ -381,7 +375,7 @@ class DictLoader(BaseLoader):
 class FunctionLoader(BaseLoader):
     """A loader that is passed a function which does the loading.  The
     function receives the name of the template and has to return either
-    an unicode string with the template source, a tuple in the form ``(source,
+    a string with the template source, a tuple in the form ``(source,
     filename, uptodatefunc)`` or `None` if the template does not exist.
 
     >>> def load_template(name):
@@ -403,7 +397,7 @@ class FunctionLoader(BaseLoader):
         rv = self.load_func(template)
         if rv is None:
             raise TemplateNotFound(template)
-        elif isinstance(rv, string_types):
+        elif isinstance(rv, str):
             return rv, None, None
         return rv
 
@@ -456,7 +450,7 @@ class PrefixLoader(BaseLoader):
 
     def list_templates(self):
         result = []
-        for prefix, loader in iteritems(self.mapping):
+        for prefix, loader in self.mapping.items():
             for template in loader.list_templates():
                 result.append(prefix + self.delimiter + template)
         return result
@@ -523,16 +517,16 @@ class ModuleLoader(BaseLoader):
     has_source_access = False
 
     def __init__(self, path):
-        package_name = "_jinja2_module_templates_%x" % id(self)
+        package_name = f"_jinja2_module_templates_{id(self):x}"
 
         # create a fake module that looks for the templates in the
         # path given.
         mod = _TemplateModule(package_name)
 
-        if not isinstance(path, abc.Iterable) or isinstance(path, string_types):
+        if not isinstance(path, abc.Iterable) or isinstance(path, str):
             path = [path]
 
-        mod.__path__ = [fspath(p) for p in path]
+        mod.__path__ = [os.fspath(p) for p in path]
 
         sys.modules[package_name] = weakref.proxy(
             mod, lambda x: sys.modules.pop(package_name, None)
@@ -555,7 +549,7 @@ class ModuleLoader(BaseLoader):
     @internalcode
     def load(self, environment, name, globals=None):
         key = self.get_template_key(name)
-        module = "%s.%s" % (self.package_name, key)
+        module = f"{self.package_name}.{key}"
         mod = getattr(self.module, module, None)
         if mod is None:
             try:
